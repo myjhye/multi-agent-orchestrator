@@ -1,33 +1,28 @@
 # Local Multi-Agent Orchestrator
 
-A lightweight, local multi-agent orchestration engine built **from scratch** in pure asynchronous Python, powered by the **Claude Agent SDK** and FastAPI.
-
-It features full **process visibility** with a real-time WebSocket event stream and an interactive single-page dashboard featuring a live DAG pipeline visualizer.
-
 ## Overview
 
-The **Local Multi-Agent Orchestrator** decomposes natural language user queries into Directed Acyclic Graph (DAG) task pipelines, schedules worker agents in topological dependency order, feeds upstream outputs forward as context to dependent steps, and streams every thought, log, tool call, and state transition to the browser in real time.
+User types a request → system breaks it into steps → specialized AI workers execute each step in order → results stream to the browser live.
 
-### Core Design Principles
-1. **Bottom-Up Construction**: Visibility layer (`events.py`) &rarr; Worker interface & registry (`workers/`) &rarr; Planner (`planner.py`) &rarr; Orchestrator coordination engine (`orchestrator.py`) &rarr; FastAPI server (`server.py`) &rarr; Chat UI (`index.html`).
-2. **Mock-First Strategy**: Zero-credit testing out-of-the-box (`WORKER_MODE=mock`). Flip a single environment variable (`WORKER_MODE=sdk`) to run real Claude Agent SDK workers with zero code changes.
-3. **Intelligence-less Orchestrator**: The orchestration engine has no hardcoded agent prompt intelligence. It focuses purely on scheduling, dependency graph resolution, payload passing, event broadcasting, and result aggregation.
-4. **Dual-Mode Planner**: Rule-based keyword classifier by default; optionally calls the Anthropic Messages API to generate dynamic execution plans. Falls back to rule-based automatically on API failure. Controlled via `PLANNER_MODE` in `.env`.
+```
+"Research CSV pitfalls, then write a parser that avoids them"
 
-## Requirements Mapping
+  → Researcher → Coder → Reviewer → Writer → final answer
+```
 
-| Requirement | Implementation Detail |
-|---|---|
-| **Single-Machine Execution** | Single Python 3.10+ process running FastAPI & Uvicorn locally on `127.0.0.1:8000`. |
-| **Orchestration from Scratch** | `orchestrator/orchestrator.py` — Pure async Python DAG engine without external multi-agent frameworks (e.g., CrewAI, LangChain, AutoGen). |
-| **2+ SDK Workers** | `sdk_worker.py` + `registry.py` define 4 specialized workers backed by the Claude Agent SDK (`Researcher`, `Coder`, `Reviewer`, `Writer`). |
-| **3+ Step, 2+ Worker Workflow** | Supports multi-step DAGs (e.g., `Coder` &rarr; `Reviewer` &rarr; `Writer` or `Researcher` &rarr; `Coder` &rarr; `Reviewer` &rarr; `Writer`). |
-| **Process Visibility** | Typed `EventBus` (`events.py`) streams every execution step, log chunk, tool invocation (`Write`, `Bash`, `WebSearch`), and status transition over WebSocket. |
-| **Chat UI** | `static/index.html` — Responsive dark console UI with dual-pane chat and live DAG pipeline visualizer. |
-| **Mock / SDK Mode Switch** | Configurable via `.env` (`WORKER_MODE=mock` / `WORKER_MODE=sdk` / `WORKER_MODE=auto`). |
-| **Dual-Mode Planner** | `planner.py` supports `PLANNER_MODE=rule` (keyword-based, deterministic) and `PLANNER_MODE=llm` (Claude API, dynamic). Auto-fallback on failure. |
+Each worker's output feeds into the next. The orchestrator handles sequencing and data passing only — all domain work is the workers' job.
 
-## Architecture Diagram
+### Layers
+
+**EventBus** — Every action emits a typed event. Who consumes it (terminal, WebSocket, monitoring) is a separate concern.
+
+**Worker protocol** — All workers share the same `worker.run()` interface. Mock and real SDK workers are interchangeable; the orchestrator doesn't know the difference.
+
+**Planner** — Turns a request into an execution plan. Rule-based (keyword matching, zero-cost) or LLM-based (Claude API, auto-fallback). The only place intelligence enters the orchestration.
+
+**Orchestrator** — Executes the plan in dependency order, passes outputs forward, broadcasts events. No domain judgment, no framework — pure async Python.
+
+## Architecture
 
 ```
 +-----------------------------------------------------------------------------------+
@@ -66,30 +61,26 @@ The **Local Multi-Agent Orchestrator** decomposes natural language user queries 
         +---------------------------+     +-----------------+
 ```
 
-## Project Directory Structure
+## Project Structure
 
 ```
 multi-agent-orchestrator/
-├── run.py                       # Main entry point to launch the local web server
-├── requirements.txt             # Python dependencies (FastAPI, uvicorn, claude-agent-sdk, python-dotenv)
-├── .env.example                 # Environment configuration template
-├── .env                         # Active environment configuration
-├── README.md                    # Project documentation
+├── run.py                          # Entry point
+├── requirements.txt
+├── .env.example
 ├── orchestrator/
-│   ├── __init__.py              # Orchestrator package exports
-│   ├── server.py                # FastAPI web server & WebSocket (/ws) endpoint
-│   ├── orchestrator.py          # Coordination & DAG execution engine (built from scratch)
-│   ├── planner.py               # Request classification & DAG plan generator
-│   ├── events.py                # Visibility layer: Event types, Event envelope, and async EventBus
-│   ├── config.py                # Environment configuration loader (Settings)
+│   ├── server.py                   # FastAPI + WebSocket
+│   ├── orchestrator.py             # DAG execution engine
+│   ├── planner.py                  # Request → execution plan
+│   ├── events.py                   # Event types + async EventBus
+│   ├── config.py                   # .env loader
 │   └── workers/
-│       ├── __init__.py          # Workers package exports
-│       ├── base.py              # WorkerSpec metadata & Worker protocol interface
-│       ├── registry.py          # Agent roster (Researcher, Coder, Reviewer, Writer) & build_worker factory
-│       ├── sdk_worker.py        # Real worker backed by the Claude Agent SDK query() stream
-│       └── mock_worker.py       # Simulated worker for offline/zero-cost pipeline verification
+│       ├── base.py                 # Worker protocol
+│       ├── registry.py             # Agent roster + factory
+│       ├── sdk_worker.py           # Claude Agent SDK wrapper
+│       └── mock_worker.py          # Simulated worker
 └── static/
-    └── index.html               # Single-page UI with chat & live orchestration visualizer
+    └── index.html                  # Chat UI + live pipeline
 ```
 
 ## Setup & Run Guide
@@ -122,24 +113,14 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-### 3. Run in Mock Mode (Default / Zero-Cost Trial)
+### 3. Run in Mock Mode (Zero-Cost)
 
-By default, `.env` is configured with `WORKER_MODE=auto` (or `WORKER_MODE=mock`). Without an `ANTHROPIC_API_KEY`, it automatically runs in **Mock Mode**, allowing you to test the complete multi-agent pipeline and live UI visualizer at zero API cost.
-
-Start the server:
+Without an `ANTHROPIC_API_KEY`, the system runs in mock mode automatically — simulated workers, real orchestration logic, full UI.
 
 ```bash
 python run.py
+# Open http://127.0.0.1:8000
 ```
-
-Open your browser and navigate to:
-[http://127.0.0.1:8000](http://127.0.0.1:8000)
-
-**What you will see:**
-- Header badge displays **`Mock workers`** and worker chips (`Researcher`, `Coder`, `Reviewer`, `Writer`).
-- Click any example query (e.g. *"Write a Python function to validate an email address, with tests"*).
-- Click **Send**.
-- Watch the **Orchestration** panel on the right build the Plan DAG, pulse active nodes, stream logs, display tool call badges (`Write solution.py`, `Bash pytest -q`), turn green (`DONE`), and output the final response in the left chat.
 
 ### 4. Switch to SDK Mode (Real Claude Agent SDK Agents)
 
@@ -184,7 +165,7 @@ PLANNER_MODE=auto
 
 ## SDK Integration: Issues & Fixes
 
-Four issues discovered when connecting the mock-verified architecture to real Claude Agent SDK workers.
+Seven issues discovered when connecting the mock-verified architecture to real Claude Agent SDK workers on Windows.
 
 ### 1. Workers ignored the user request
 
@@ -271,7 +252,7 @@ except (asyncio.TimeoutError, Exception) as exc:
     result = "(This step could not complete. Proceed with outputs from other steps.)"
 ```
 
-### 5. LLM-based planner
+### 5. Rule-based planner couldn't handle novel requests
 
 The original rule-based planner classified requests by keyword matching. This worked but couldn't handle ambiguous or novel requests outside the predefined keyword buckets.
 
