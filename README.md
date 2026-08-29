@@ -12,6 +12,7 @@ The **Local Multi-Agent Orchestrator** decomposes natural language user queries 
 1. **Bottom-Up Construction**: Visibility layer (`events.py`) &rarr; Worker interface & registry (`workers/`) &rarr; Planner (`planner.py`) &rarr; Orchestrator coordination engine (`orchestrator.py`) &rarr; FastAPI server (`server.py`) &rarr; Chat UI (`index.html`).
 2. **Mock-First Strategy**: Zero-credit testing out-of-the-box (`WORKER_MODE=mock`). Flip a single environment variable (`WORKER_MODE=sdk`) to run real Claude Agent SDK workers with zero code changes.
 3. **Intelligence-less Orchestrator**: The orchestration engine has no hardcoded agent prompt intelligence. It focuses purely on scheduling, dependency graph resolution, payload passing, event broadcasting, and result aggregation.
+4. **Dual-Mode Planner**: Rule-based keyword classifier by default; optionally calls the Anthropic Messages API to generate dynamic execution plans. Falls back to rule-based automatically on API failure. Controlled via `PLANNER_MODE` in `.env`.
 
 ## Requirements Mapping
 
@@ -24,6 +25,7 @@ The **Local Multi-Agent Orchestrator** decomposes natural language user queries 
 | **Process Visibility** | Typed `EventBus` (`events.py`) streams every execution step, log chunk, tool invocation (`Write`, `Bash`, `WebSearch`), and status transition over WebSocket. |
 | **Chat UI** | `static/index.html` — Responsive dark console UI with dual-pane chat and live DAG pipeline visualizer. |
 | **Mock / SDK Mode Switch** | Configurable via `.env` (`WORKER_MODE=mock` / `WORKER_MODE=sdk` / `WORKER_MODE=auto`). |
+| **Dual-Mode Planner** | `planner.py` supports `PLANNER_MODE=rule` (keyword-based, deterministic) and `PLANNER_MODE=llm` (Claude API, dynamic). Auto-fallback on failure. |
 
 ## Architecture Diagram
 
@@ -47,13 +49,13 @@ The **Local Multi-Agent Orchestrator** decomposes natural language user queries 
                     |                    |                    |
  3. Decompose Plan  |                    | 4. Execute Steps   | 5. Stream Events
                     v                    |    in Topological  |    (Real-time)
-+-------------------+---+                |    Order           v
++-----------------------+                |    Order           v
 |      Planner          |                v            +---------------+
 | (orchestrator/        |        +---------------+    |   EventBus    |
 |  planner.py)          |        | Worker Factory|    | (orchestrator/|
-+-----------------------+        | (registry.py) |    |  events.py)   |
-                                 +-------+-------+    +-------+-------+
-                                         |                    |
+|                       |        | (registry.py) |    |  events.py)   |
+|  rule | llm (auto)    |        +-------+-------+    +-------+-------+
++-----------------------+                |                    |
                       +------------------+------------------+ | 6. Forward JSON
                       |                                     | |    to Browser WS
                       v                                     v |
@@ -164,6 +166,22 @@ python run.py
 - Header badge updates to **`SDK workers`**.
 - Worker agents now execute real Claude Agent SDK agentic loops with access to system tools (`Read`, `Write`, `Edit`, `Bash`, `WebSearch`).
 
+### 5. Planner Mode
+
+The planner decomposes user requests into execution plans. Two modes are available:
+
+| Mode | Behavior |
+|---|---|
+| `rule` | Keyword-based classification. Deterministic, zero-cost. Default when no API key is set. |
+| `llm` | Calls the Anthropic Messages API to generate a dynamic JSON plan. Requires `ANTHROPIC_API_KEY`. Falls back to `rule` on failure. |
+| `auto` | Uses `llm` if `ANTHROPIC_API_KEY` is set, otherwise `rule`. **(default)** |
+
+Configure in `.env`:
+
+```bash
+PLANNER_MODE=auto
+```
+
 ## SDK Integration: Issues & Fixes
 
 Four issues discovered when connecting the mock-verified architecture to real Claude Agent SDK workers.
@@ -251,4 +269,33 @@ except asyncio.TimeoutError:
 except (asyncio.TimeoutError, Exception) as exc:
     await bus.emit(EventType.STEP_FAILED, ...)
     result = "(This step could not complete. Proceed with outputs from other steps.)"
+```
+
+### 5. LLM-based planner
+
+The original rule-based planner classified requests by keyword matching. This worked but couldn't handle ambiguous or novel requests outside the predefined keyword buckets.
+
+**Fix:** Added a dual-mode `Planner` that optionally calls the Anthropic Messages API to generate a JSON execution plan. The orchestrator, workers, and event system required zero changes — `Planner.plan()` was the single seam designed for this swap from the start. API failure triggers automatic fallback to rule-based planning.
+
+```python
+# Before — rule-based only
+class Planner:
+    def plan(self, request: str) -> Plan:
+        text = request.lower()
+        if any(w in text for w in _CODE_WORDS):
+            return self._code_review(request)
+        ...
+
+# After — dual-mode with fallback
+class Planner:
+    def __init__(self, mode: str = "rule") -> None:
+        self.mode = mode
+
+    def plan(self, request: str) -> Plan:
+        if self.mode == "llm":
+            try:
+                return self._plan_with_llm(request)
+            except Exception:
+                return self._plan_with_rules(request)
+        return self._plan_with_rules(request)
 ```
