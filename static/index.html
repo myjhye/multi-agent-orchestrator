@@ -183,6 +183,39 @@
   }
   .log:empty { display: none; }
 
+  .run-summary {
+    background: var(--panel-2);
+    border: 1px solid var(--done);
+    border-left: 3px solid var(--done);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 18px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .run-summary.has-failure {
+    border-color: var(--running);
+    border-left-color: var(--running);
+  }
+  .run-summary b { color: var(--ink); font-weight: 600; }
+  .run-summary .stat { display: inline-block; margin-right: 16px; }
+  .run-summary .stat .val { color: var(--done); font-family: var(--mono); font-weight: 600; }
+  .run-summary .stat.fail .val { color: var(--failed); }
+
+  .step-output-toggle {
+    font-family: var(--mono); font-size: 11px; color: var(--active);
+    cursor: pointer; margin-top: 6px; user-select: none;
+  }
+  .step-output-toggle:hover { text-decoration: underline; }
+  .step-output-preview {
+    display: none;
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+    background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px;
+    padding: 9px 11px; margin-top: 6px; max-height: 200px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .step-output-preview.open { display: block; }
+
   /* ── Scrollbars ────────────────────────────────────────────────────────── */
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
@@ -243,6 +276,7 @@ const input = $("#input");
 const send = $("#send");
 
 let ws, busy = false;
+let runStartTime = 0;
 const nodes = {};   // step_id -> { el, log, tools, statusEl }
 
 // ── Connection ─────────────────────────────────────────────────────────────
@@ -310,6 +344,7 @@ function handleEvent(ev) {
 
 function onRunStarted(p) {
   setBusy(true);
+  runStartTime = Date.now();
   addMessage("user", "You", p.request);
   for (const k in nodes) delete nodes[k];
   orch.innerHTML = "";
@@ -371,6 +406,22 @@ function onStepDone(p) {
   const n = nodes[p.step_id]; if (!n) return;
   n.el.classList.remove("active"); n.el.classList.add("done");
   n.statusEl.textContent = "done";
+
+  if (p.output && p.output.length > 0) {
+    const toggle = document.createElement("div");
+    toggle.className = "step-output-toggle";
+    toggle.textContent = "▶ Show output (" + p.output.length + " chars)";
+    const preview = document.createElement("div");
+    preview.className = "step-output-preview";
+    preview.textContent = p.output.substring(0, 1000) + (p.output.length > 1000 ? "\n...(truncated)" : "");
+    toggle.onclick = () => {
+      preview.classList.toggle("open");
+      toggle.textContent = preview.classList.contains("open")
+        ? "▼ Hide output" : "▶ Show output (" + p.output.length + " chars)";
+    };
+    n.el.appendChild(toggle);
+    n.el.appendChild(preview);
+  }
 }
 function onStepFailed(p) {
   const n = nodes[p.step_id]; if (!n) return;
@@ -380,6 +431,26 @@ function onStepFailed(p) {
 }
 function onRunCompleted(p) {
   addMessage("assistant", "Orchestrator", p.result);
+
+  const steps = p.steps_run || [];
+  const failed = document.querySelectorAll(".node.failed").length;
+  const succeeded = steps.length - failed;
+  const elapsed = ((Date.now() - runStartTime) / 1000).toFixed(1);
+
+  const summary = document.createElement("div");
+  summary.className = "run-summary" + (failed > 0 ? " has-failure" : "");
+  summary.innerHTML =
+    "<b>Run Complete</b><br>" +
+    '<span class="stat">Steps: <span class="val">' + steps.length + '</span></span>' +
+    '<span class="stat">Succeeded: <span class="val">' + succeeded + '</span></span>' +
+    (failed > 0 ? '<span class="stat fail">Failed: <span class="val">' + failed + '</span></span>' : '') +
+    '<span class="stat">Time: <span class="val">' + elapsed + 's</span></span>' +
+    "<br>" + steps.map(s =>
+      '<span style="color:' + (document.querySelector('.node.failed .node-title')?.textContent.includes(s.title) ? 'var(--failed)' : 'var(--done)') + '">' +
+      '✓ ' + s.title + '</span>'
+    ).join(' → ');
+  orch.appendChild(summary);
+
   setBusy(false);
 }
 function onRunFailed(p) {
