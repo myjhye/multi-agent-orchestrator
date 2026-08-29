@@ -11,6 +11,9 @@ The SDK talks to Claude for us: it runs the agent loop, executes built-in tools
 
 from __future__ import annotations
 
+import os
+import tempfile
+
 from .base import LogCallback, ToolCallback, WorkerSpec
 
 # Imported lazily inside run() so the app can still boot in mock mode on a
@@ -46,29 +49,48 @@ class SdkWorker:
 
         options = ClaudeAgentOptions(**options_kwargs)
 
-        collected: list[str] = []
+        # Windows command-line length limit workaround:
+        # Write long prompts to a temp file and pass the file path
+        prompt_arg = task
+        tmp_path = None
+        if len(task) > 4000:
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False, encoding="utf-8"
+            )
+            tmp.write(task)
+            tmp.close()
+            tmp_path = tmp.name
+            prompt_arg = f"Read the file at {tmp_path} for your complete instructions and context."
 
-        async for message in query(prompt=task, options=options):
-            # Text the agent produced -> stream it as a log line.
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        collected.append(block.text)
-                        await on_log(block.text)
-                    else:
-                        # Tool-use and other blocks vary by SDK version; read
-                        # them defensively by attribute rather than by class.
-                        tool_name = getattr(block, "name", None)
-                        if tool_name:
-                            detail = _short_repr(getattr(block, "input", ""))
-                            await on_tool(str(tool_name), detail)
-            else:
-                # ResultMessage / SystemMessage / etc. — surface a compact note
-                # so the timeline shows the agent finishing, without noise.
-                # ResultMessage.result duplicates TextBlock text, so do not append to collected.
-                result_text = getattr(message, "result", None)
-                if isinstance(result_text, str) and result_text.strip():
-                    await on_log(result_text)
+        collected: list[str] = []
+        try:
+            async for message in query(prompt=prompt_arg, options=options):
+                # Text the agent produced -> stream it as a log line.
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            collected.append(block.text)
+                            await on_log(block.text)
+                        else:
+                            # Tool-use and other blocks vary by SDK version; read
+                            # them defensively by attribute rather than by class.
+                            tool_name = getattr(block, "name", None)
+                            if tool_name:
+                                detail = _short_repr(getattr(block, "input", ""))
+                                await on_tool(str(tool_name), detail)
+                else:
+                    # ResultMessage / SystemMessage / etc. — surface a compact note
+                    # so the timeline shows the agent finishing, without noise.
+                    # ResultMessage.result duplicates TextBlock text, so do not append to collected.
+                    result_text = getattr(message, "result", None)
+                    if isinstance(result_text, str) and result_text.strip():
+                        await on_log(result_text)
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
         return "".join(collected).strip()
 
