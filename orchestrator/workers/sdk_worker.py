@@ -65,9 +65,9 @@ class SdkWorker:
             else:
                 # ResultMessage / SystemMessage / etc. — surface a compact note
                 # so the timeline shows the agent finishing, without noise.
+                # ResultMessage.result duplicates TextBlock text, so do not append to collected.
                 result_text = getattr(message, "result", None)
                 if isinstance(result_text, str) and result_text.strip():
-                    collected.append(result_text)
                     await on_log(result_text)
 
         return "".join(collected).strip()
