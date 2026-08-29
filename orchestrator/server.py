@@ -50,8 +50,11 @@ async def info() -> dict:
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
-    await websocket.accept()
-    orchestrator = Orchestrator(mode=settings.worker_mode, model=settings.model)
+    orchestrator = Orchestrator(
+        mode=settings.worker_mode,
+        model=settings.model,
+        planner_mode=settings.planner_mode,
+    )
 
     try:
         while True:

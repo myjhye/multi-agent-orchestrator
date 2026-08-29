@@ -25,10 +25,10 @@ from .workers import WORKER_SPECS, build_worker
 
 
 class Orchestrator:
-    def __init__(self, *, mode: str, model: str | None) -> None:
+    def __init__(self, *, mode: str, model: str | None, planner_mode: str = "rule") -> None:
         self.mode = mode
         self.model = model
-        self.planner = Planner()
+        self.planner = Planner(mode=planner_mode)
 
     async def run(self, run_id: str, request: str, bus: EventBus) -> str:
         await bus.emit(EventType.RUN_STARTED, request=request, mode=self.mode)

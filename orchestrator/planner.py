@@ -1,27 +1,35 @@
 """
 planner.py — decompose a natural-language request into a plan.
 
-A Plan is an ordered list of Steps. Each Step names the worker to run, an
-instruction for that worker, and which earlier steps it depends on (so the
-orchestrator can feed their outputs forward).
+Two modes:
+  - "llm":  Calls the Anthropic Messages API to generate a JSON plan.
+            The orchestrator stays SDK-free; this is a raw API call.
+  - "rule": Original keyword-based classification (zero-cost, deterministic).
 
-The planner here is rule-based: it classifies the request and selects a
-workflow template. It is intentionally transparent and deterministic — you can
-read a request and predict the plan. The Planner class is the single seam where
-you could swap in an LLM-generated plan later without touching the orchestrator;
-`plan()` just has to return the same Step list.
+The Planner is the single seam where intelligence enters the orchestration.
+Swapping modes changes only how plans are generated — the orchestrator,
+workers, and event system are untouched.
 """
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
+
+AVAILABLE_WORKERS = {
+    "researcher": "Gathers and verifies facts from the web.",
+    "coder": "Writes code to satisfy a spec.",
+    "reviewer": "Reviews code and writes tests.",
+    "writer": "Synthesizes prior outputs into the final answer.",
+}
 
 
 @dataclass
 class Step:
     id: str
-    worker: str                       # key into WORKER_SPECS
-    instruction: str                  # what this worker should do
+    worker: str
+    instruction: str
     depends_on: list[str] = field(default_factory=list)
 
 
@@ -32,12 +40,12 @@ class Plan:
     rationale: str = ""
 
 
-# Keyword buckets used to classify the request.
+# ── Keyword buckets for rule-based mode ─────────────────────────────────
 _CODE_WORDS = (
     "code", "function", "script", "program", "bug", "refactor", "api",
     "python", "javascript", "java", "sql", "class", "implement", "algorithm",
-    "write", "reader", "test", "tests",
-    "코드", "함수", "구현", "스크립트", "버그", "리팩터", "알고리즘", "작성", "테스트",
+    "write", "reader", "parser", "test", "tests",
+    "코드", "함수", "구현", "스크립트", "버그", "리팩터", "알고리즘",
 )
 _RESEARCH_WORDS = (
     "research", "find", "compare", "summarize", "summary", "explain", "news",
@@ -45,35 +53,114 @@ _RESEARCH_WORDS = (
     "조사", "비교", "요약", "설명", "정리", "뉴스", "알아봐", "찾아",
 )
 _BUILD_AFTER_RESEARCH = (
-    "research and", "then write", "then build", "and write",
+    "research and", "then write", "then build", "then create", "and write", "and build",
     "조사해서", "조사하고", "찾아서", "알아보고",
 )
 
 
 class Planner:
+    def __init__(self, mode: str = "rule") -> None:
+        self.mode = mode
+
     def plan(self, request: str) -> Plan:
+        if self.mode == "llm":
+            try:
+                return self._plan_with_llm(request)
+            except Exception as e:
+                print(f"[Planner] LLM planning failed ({e}), falling back to rule-based")
+                return self._plan_with_rules(request)
+        return self._plan_with_rules(request)
+
+    # ── LLM-based planning ──────────────────────────────────────────────
+
+    def _plan_with_llm(self, request: str) -> Plan:
+        import anthropic
+
+        client = anthropic.Anthropic()
+
+        worker_desc = "\n".join(
+            f"  - {name}: {desc}" for name, desc in AVAILABLE_WORKERS.items()
+        )
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Decompose the following user request into an execution plan.
+
+Available workers:
+{worker_desc}
+
+Rules:
+- Each step has: id (s1, s2, ...), worker (one of the available workers), instruction (what this worker should do), depends_on (list of step ids whose output this step needs).
+- Use at least 2 different workers.
+- Use at least 3 steps.
+- The last step should be "writer" to assemble the final answer.
+- Steps must be in dependency order.
+- Keep instructions concise and specific to the request.
+
+User request: "{request}"
+
+Respond with ONLY valid JSON, no markdown fences, no explanation:
+{{
+  "rationale": "one sentence explaining the plan",
+  "steps": [
+    {{"id": "s1", "worker": "...", "instruction": "...", "depends_on": []}},
+    ...
+  ]
+}}"""
+                }
+            ],
+        )
+
+        text = response.content[0].text.strip()
+        # Strip markdown fences if present
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]
+            if text.endswith("```"):
+                text = text[: text.rfind("```")]
+            text = text.strip()
+
+        data = json.loads(text)
+
+        steps = [
+            Step(
+                id=s["id"],
+                worker=s["worker"],
+                instruction=s["instruction"],
+                depends_on=s.get("depends_on", []),
+            )
+            for s in data["steps"]
+            if s["worker"] in AVAILABLE_WORKERS
+        ]
+
+        if len(steps) < 2:
+            raise ValueError("LLM plan has fewer than 2 valid steps")
+
+        return Plan(
+            goal=request,
+            steps=steps,
+            rationale=data.get("rationale", "LLM-generated plan"),
+        )
+
+    # ── Rule-based planning ─────────────────────────────────────────────
+
+    def _plan_with_rules(self, request: str) -> Plan:
         text = request.lower()
 
         wants_code = any(w in text for w in _CODE_WORDS)
         wants_research = any(w in text for w in _RESEARCH_WORDS)
         research_then_build = any(w in text for w in _BUILD_AFTER_RESEARCH)
 
-        # Workflow 1: research -> code -> review -> synthesize (4 steps, 4 workers)
         if wants_code and (wants_research or research_then_build):
             return self._research_build_review(request)
-
-        # Workflow 2 (flagship): code -> review -> synthesize (3 steps, 3 workers)
         if wants_code:
             return self._code_review(request)
-
-        # Workflow 3: research -> synthesize (2 workers)
         if wants_research:
             return self._research_write(request)
-
-        # Fallback: still multi-step — research the ask, then write it up.
         return self._research_write(request)
-
-    # ── templates ───────────────────────────────────────────────────────────
 
     def _code_review(self, request: str) -> Plan:
         return Plan(
@@ -81,8 +168,7 @@ class Planner:
             rationale="Detected a coding task. Route: Coder writes it, Reviewer "
             "checks it and adds tests, Writer assembles the final answer.",
             steps=[
-                Step("s1", "coder",
-                     "Write code that satisfies the user's request."),
+                Step("s1", "coder", "Write code that satisfies the user's request."),
                 Step("s2", "reviewer",
                      "Review the code from the previous step and write tests for it.",
                      depends_on=["s1"]),
