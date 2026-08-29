@@ -109,10 +109,20 @@ class Orchestrator:
         worker = build_worker(step.worker, mode=self.mode, model=self.model)
 
         try:
-            result = await worker.run(prompt, on_log, on_tool)
-        except Exception as exc:  # noqa: BLE001
-            await bus.emit(EventType.STEP_FAILED, step_id=step.id, worker=step.worker, error=str(exc))
-            raise
+            result = await asyncio.wait_for(
+                worker.run(prompt, on_log, on_tool),
+                timeout=180,  # 3 minutes
+            )
+        except (asyncio.TimeoutError, Exception) as exc:
+            error_msg = "Worker timed out (180s)" if isinstance(exc, asyncio.TimeoutError) else str(exc)
+            await bus.emit(
+                EventType.STEP_FAILED,
+                step_id=step.id,
+                worker=step.worker,
+                error=error_msg,
+            )
+            # Don't raise — return fallback so the workflow continues
+            result = "(This step could not complete. Proceed with outputs from other steps.)"
 
         await bus.emit(
             EventType.STEP_COMPLETED,
