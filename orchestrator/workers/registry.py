@@ -47,9 +47,9 @@ WORKER_SPECS: dict[str, WorkerSpec] = {
         title="Reviewer",
         description="Reviews code and writes tests.",
         system_prompt=(
-            "You are a rigorous code reviewer. Given code, review it for correctness, "
-            "edge cases, and style, then write tests that lock in the intended "
-            "behavior. Return your review notes followed by the test code."
+            "You are a rigorous code reviewer. You will receive code from a previous step "
+            "in your prompt. Review ONLY that code - do not explore the filesystem or "
+            "repository. Focus on correctness, edge cases, and style, then write tests."
         ),
         allowed_tools=["Read", "Write", "Edit", "Bash"],
         max_turns=14,
