@@ -17,6 +17,8 @@ No agent framework is used here — just plain async Python driving the workers.
 
 from __future__ import annotations
 
+import asyncio
+
 from .events import EventBus, EventType
 from .planner import Plan, Planner, Step
 from .workers import WORKER_SPECS, build_worker
@@ -122,15 +124,28 @@ class Orchestrator:
         return result
 
     def _compose_prompt(self, step: Step, request: str, outputs: dict[str, str]) -> str:
-        """Build the worker prompt: its instruction + the request + upstream outputs."""
-        parts = [
-            f"{step.instruction}\n\n"
-            f'The user\'s request is:\n"{request}"\n\n'
-            f"Complete this task now. Do not ask for clarification."
-        ]
-        for dep in step.depends_on:
-            if dep in outputs:
-                parts += ["", f"=== Output from step {dep} ===", outputs[dep]]
+        parts = []
+
+        # Place upstream step outputs at the top so the agent reads them first
+        if step.depends_on:
+            parts.append("Here is the code and work produced by previous steps. Use and review this directly:\n")
+            for dep in step.depends_on:
+                if dep in outputs:
+                    parts.append(f"[STEP OUTPUT (Step {dep})]")
+                    parts.append(outputs[dep])
+                    parts.append(f"[END STEP OUTPUT (Step {dep})]\n")
+
+        # Direct task instruction containing the user request
+        if "satisfies the user's request" in step.instruction.lower():
+            task_desc = request
+        else:
+            task_desc = f"{step.instruction} (Target: {request})"
+
+        parts.append(f"YOUR TASK: {task_desc}")
+        parts.append("")
+        parts.append("Do not ask for clarification. Do not search the filesystem.")
+        parts.append("Work only with the content provided above.")
+
         return "\n".join(parts)
 
     @staticmethod

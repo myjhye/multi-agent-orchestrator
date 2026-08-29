@@ -117,9 +117,11 @@ def _script_for(role: str, task: str) -> tuple[list[str], list[tuple[str, str]],
 
 
 def _extract_upstream(task: str) -> list[str]:
-    """Pull the '=== Output from step X ===' sections out of a composed prompt."""
+    """Pull the '--- Output from previous step' sections out of a composed prompt."""
     sections: list[str] = []
-    marker = "=== Output from step"
+    marker = "--- Output from previous step"
+    if marker not in task:
+        marker = "=== Output from step"
     idx = task.find(marker)
     while idx != -1:
         nxt = task.find(marker, idx + len(marker))
@@ -127,6 +129,8 @@ def _extract_upstream(task: str) -> list[str]:
         # drop the header line, keep the body
         lines = chunk.splitlines()
         body = "\n".join(lines[1:]).strip()
+        if body.endswith("--- End of step output ---"):
+            body = body[:-len("--- End of step output ---")].strip()
         if body:
             sections.append(body)
         idx = nxt
