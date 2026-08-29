@@ -53,7 +53,7 @@ class SdkWorker:
         # Write long prompts to a temp file and pass the file path
         prompt_arg = task
         tmp_path = None
-        if len(task) > 4000:
+        if len(task) > 500:
             tmp = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".md", delete=False, encoding="utf-8"
             )
