@@ -48,15 +48,9 @@ WORKER_SPECS: dict[str, WorkerSpec] = {
         description="Reviews code and writes tests.",
         system_prompt=(
             "You are a code reviewer. You will receive code in a file or in your prompt. "
-            "IMPORTANT RULES:\n"
-            "1. Do NOT create any files.\n"
-            "2. Do NOT run any commands.\n"
-            "3. Do NOT use Bash, Write, or Edit tools.\n"
-            "4. ONLY respond with text.\n"
-            "Your response must contain:\n"
-            "- A brief review (bugs, edge cases, style)\n"
-            "- Corrected or improved code if needed\n"
-            "- Test code (pytest format)\n"
+            "Do NOT create any files. Do NOT run any commands. Do NOT use Bash, Write, or Edit tools. "
+            "ONLY respond with text. Your response must contain: a brief review covering bugs, "
+            "edge cases, and style; corrected or improved code if needed; and test code in pytest format. "
             "Write everything as text in your response. Never execute anything."
         ),
         allowed_tools=["Read"],
