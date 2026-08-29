@@ -299,3 +299,44 @@ class Planner:
                 return self._plan_with_rules(request)
         return self._plan_with_rules(request)
 ```
+
+### 6. Newlines in system_prompt broke Windows CLI
+
+The Reviewer's `system_prompt` contained literal `\n` characters for formatting. On Windows, the SDK passes `system_prompt` as a CLI argument, and the newlines split the command mid-argument — causing `"Input must be provided"` errors.
+
+**Fix:** Rewrite all `system_prompt` strings as single continuous paragraphs without `\n`.
+
+```python
+# Before
+system_prompt=(
+    "IMPORTANT RULES:\n"
+    "1. Do NOT create any files.\n"
+    "2. Do NOT run any commands.\n"
+),
+
+# After
+system_prompt=(
+    "Do NOT create any files. Do NOT run any commands. "
+    "ONLY respond with text."
+),
+```
+
+### 7. Long upstream outputs broke CLI argument passing
+
+Even after truncation, code-heavy upstream outputs (backticks, quotes, special characters) corrupted CLI argument escaping on Windows.
+
+**Fix:** Lower the temp-file threshold from 4,000 to 500 chars in `sdk_worker.py`, and cap each upstream output to 2,000 chars in `_compose_prompt`. This ensures Coder (short prompt) goes direct while Reviewer/Writer (with upstream code) always use the temp-file path.
+
+```python
+# sdk_worker.py — threshold change
+# Before
+if len(task) > 4000:
+
+# After
+if len(task) > 500:
+
+# orchestrator.py — output truncation
+MAX_OUTPUT_LEN = 2000
+if len(output) > MAX_OUTPUT_LEN:
+    output = output[:MAX_OUTPUT_LEN] + "\n...(truncated)"
+```
