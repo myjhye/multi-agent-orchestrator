@@ -135,17 +135,22 @@ class Orchestrator:
 
     def _compose_prompt(self, step: Step, request: str, outputs: dict[str, str]) -> str:
         parts = []
+        MAX_OUTPUT_LEN = 2000  # Keep total prompt under CLI limits
 
-        # Place upstream step outputs at the top so the agent reads them first
         if step.depends_on:
-            parts.append("Here is the code and work produced by previous steps. Use and review this directly:\n")
+            parts.append(
+                "Here is the code and work produced by previous steps. "
+                "Use and review this directly:\n"
+            )
             for dep in step.depends_on:
                 if dep in outputs:
+                    output = outputs[dep]
+                    if len(output) > MAX_OUTPUT_LEN:
+                        output = output[:MAX_OUTPUT_LEN] + "\n...(truncated)"
                     parts.append(f"[STEP OUTPUT (Step {dep})]")
-                    parts.append(outputs[dep])
+                    parts.append(output)
                     parts.append(f"[END STEP OUTPUT (Step {dep})]\n")
 
-        # Direct task instruction containing the user request
         if "satisfies the user's request" in step.instruction.lower():
             task_desc = request
         else:
