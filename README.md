@@ -163,3 +163,92 @@ python run.py
 4. Refresh [http://127.0.0.1:8000](http://127.0.0.1:8000):
 - Header badge updates to **`SDK workers`**.
 - Worker agents now execute real Claude Agent SDK agentic loops with access to system tools (`Read`, `Write`, `Edit`, `Bash`, `WebSearch`).
+
+## SDK Integration: Issues & Fixes
+
+Four issues discovered when connecting the mock-verified architecture to real Claude Agent SDK workers.
+
+### 1. Workers ignored the user request
+
+SDK agents treated the `=== User request ===` delimiter as metadata and skipped it. Mock workers process strings as data; SDK agents interpret them as conversation.
+
+**Fix:** Label the request explicitly with `YOUR TASK:`, add `"Do not ask for clarification"`, place upstream outputs at the top of the prompt.
+
+```python
+# Before
+parts = [step.instruction, "", "=== User request ===", request]
+for dep in step.depends_on:
+    if dep in outputs:
+        parts += ["", f"=== Output from step {dep} ===", outputs[dep]]
+
+# After
+if step.depends_on:
+    parts.append("Here is the work produced by previous steps. Use it directly:\n")
+    for dep in step.depends_on:
+        if dep in outputs:
+            parts.append(f"[STEP OUTPUT (Step {dep})]")
+            parts.append(outputs[dep])
+            parts.append(f"[END STEP OUTPUT (Step {dep})]\n")
+parts.append(f"YOUR TASK: {task_desc}")
+parts.append("Do not ask for clarification. Do not search the filesystem.")
+```
+
+### 2. Reviewer explored the entire project
+
+With `Bash`, `Write`, and `Edit` in `allowed_tools`, the agent ran `git status`, read every source file, and installed packages instead of reviewing the provided code.
+
+**Fix:** Strip tools to `["Read"]` only, cut `max_turns` from 14 to 4, add explicit scope constraint to `system_prompt`.
+
+```python
+# Before
+allowed_tools=["Read", "Write", "Edit", "Bash"],
+max_turns=14,
+
+# After
+allowed_tools=["Read"],
+max_turns=4,
+system_prompt="...Review ONLY that provided code. Do not search the filesystem..."
+```
+
+### 3. Windows command-line length limit (~8,191 chars)
+
+The SDK invokes a CLI subprocess internally. Coder's output was long enough that the Reviewer's composed prompt exceeded the Windows argument length cap.
+
+**Fix:** In `sdk_worker.py`, write prompts over 4,000 chars to a temp `.md` file and pass the file path instead. Clean up in `finally`.
+
+```python
+# Before
+async for message in query(prompt=task, options=options):
+    ...
+
+# After
+if len(task) > 4000:
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md",
+                                      delete=False, encoding="utf-8")
+    tmp.write(task); tmp.close()
+    prompt_arg = f"Read the file at {tmp.name} for your complete instructions."
+try:
+    async for message in query(prompt=prompt_arg, options=options):
+        ...
+finally:
+    if tmp_path:
+        os.unlink(tmp_path)
+```
+
+### 4. Single worker failure killed the entire run
+
+A timeout or exception in one step raised and aborted all downstream steps — even when earlier steps had already produced usable output.
+
+**Fix:** Catch exceptions in `_run_step` and return a fallback string instead of re-raising. The failed step still emits `STEP_FAILED` (shown as red in the UI), but the workflow continues.
+
+```python
+# Before
+except asyncio.TimeoutError:
+    await bus.emit(EventType.STEP_FAILED, ...)
+    raise
+
+# After
+except (asyncio.TimeoutError, Exception) as exc:
+    await bus.emit(EventType.STEP_FAILED, ...)
+    result = "(This step could not complete. Proceed with outputs from other steps.)"
+```
