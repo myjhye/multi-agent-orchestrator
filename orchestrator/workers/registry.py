@@ -28,7 +28,7 @@ WORKER_SPECS: dict[str, WorkerSpec] = {
             "notes with the key facts. Prefer primary sources. Do not pad."
         ),
         allowed_tools=["WebSearch", "Read"],
-        max_turns=10,
+        max_turns=6,
     ),
     "coder": WorkerSpec(
         name="coder",
@@ -40,31 +40,40 @@ WORKER_SPECS: dict[str, WorkerSpec] = {
             "summary of what it does. Keep it focused on exactly what was asked."
         ),
         allowed_tools=["Read", "Write", "Edit", "Bash"],
-        max_turns=14,
+        max_turns=10,
     ),
     "reviewer": WorkerSpec(
         name="reviewer",
         title="Reviewer",
         description="Reviews code and writes tests.",
         system_prompt=(
-            "You are a rigorous code reviewer. You will receive code from a previous step "
-            "in your prompt. Review ONLY that code - do not explore the filesystem or "
-            "repository. Focus on correctness, edge cases, and style, then write tests."
+            "You are a code reviewer. You will receive code in a file or in your prompt. "
+            "IMPORTANT RULES:\n"
+            "1. Do NOT create any files.\n"
+            "2. Do NOT run any commands.\n"
+            "3. Do NOT use Bash, Write, or Edit tools.\n"
+            "4. ONLY respond with text.\n"
+            "Your response must contain:\n"
+            "- A brief review (bugs, edge cases, style)\n"
+            "- Corrected or improved code if needed\n"
+            "- Test code (pytest format)\n"
+            "Write everything as text in your response. Never execute anything."
         ),
-        allowed_tools=["Read", "Write", "Edit", "Bash"],
-        max_turns=14,
+        allowed_tools=["Read"],
+        max_turns=4,
     ),
     "writer": WorkerSpec(
         name="writer",
         title="Writer",
         description="Synthesizes prior outputs into the final answer.",
         system_prompt=(
-            "You are a clear technical writer. Given the outputs of previous steps, "
-            "combine them into a single, well-structured final answer for the user. "
-            "Preserve any code verbatim. Be complete but concise."
+            "You are a clear technical writer. Combine the outputs of previous steps "
+            "into a single, well-structured final answer. Preserve any code verbatim. "
+            "If a step failed or produced no useful output, work with what is available. "
+            "Be complete but concise."
         ),
         allowed_tools=["Read"],
-        max_turns=8,
+        max_turns=4,
     ),
 }
 
