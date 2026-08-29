@@ -123,7 +123,11 @@ class Orchestrator:
 
     def _compose_prompt(self, step: Step, request: str, outputs: dict[str, str]) -> str:
         """Build the worker prompt: its instruction + the request + upstream outputs."""
-        parts = [step.instruction, "", "=== User request ===", request]
+        parts = [
+            f"{step.instruction}\n\n"
+            f'The user\'s request is:\n"{request}"\n\n'
+            f"Complete this task now. Do not ask for clarification."
+        ]
         for dep in step.depends_on:
             if dep in outputs:
                 parts += ["", f"=== Output from step {dep} ===", outputs[dep]]
