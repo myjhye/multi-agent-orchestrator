@@ -28,6 +28,7 @@ class WorkerSpec:
     system_prompt: str              # persona / instructions
     allowed_tools: list[str] = field(default_factory=list)
     max_turns: int = 12
+    model: str | None = None        # None -> use default model
 
 
 class Worker(Protocol):

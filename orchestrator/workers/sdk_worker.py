@@ -44,7 +44,9 @@ class SdkWorker:
             permission_mode="acceptEdits",  # unattended: auto-approve file edits
             max_turns=self.spec.max_turns,
         )
-        if self.model:
+        if self.spec.model:
+            options_kwargs["model"] = self.spec.model
+        elif self.model:
             options_kwargs["model"] = self.model
 
         options = ClaudeAgentOptions(**options_kwargs)
