@@ -38,15 +38,17 @@ Request → Planner → Orchestrator → EventBus → Chat UI
 
 ### Example
 
-Request: *"What are the tradeoffs between REST and GraphQL?"*
+Request: *"Research password hashing best practices, then implement a secure hasher in Python with tests"*
 
 | Step | Worker | What happens | Output |
 |---|---|---|---|
-| 1 | **Researcher** | Searches the web, cross-checks 11 sources | 8 tradeoff categories documented (performance, caching, over-fetching, versioning, tooling, learning curve, ...) |
-| 2 | **Evaluator** | Scores the research for accuracy and completeness | 4/5 overall — flagged 10 missing areas (error handling, real-time, security, versioning, tooling) |
-| 3 | **Writer** | Reads research + evaluation feedback, fills gaps | 10-section comparison with decision matrix, incorporating all flagged gaps |
+| 1 | **Researcher** | Searches web, cross-checks OWASP/NIST/RFC sources | Best practices: Argon2id primary, bcrypt fallback, OWASP baseline params, salting strategy |
+| 2 | **Coder** | Reads step 1, implements hasher following recommendations | `secure_hasher.py` — Argon2id (OWASP params) + bcrypt fallback, auto-detect on verify, 72-byte guard |
+| 3 | **Reviewer** | Reads step 2, finds issues, writes tests | 5 issues found (unused import, missing constant-time docs, ...) + pytest suite with edge cases |
+| 4 | **Writer** | Reads steps 1–3, assembles final answer | Best practices overview → corrected implementation → test suite → installation instructions |
+| 5 | **Evaluator** | Scores final answer against original request | `{"completeness": 4, "correctness": 4, "quality": 4, "overall": 4}` + improvement notes |
 
-The Evaluator's feedback directly improved the final output — Writer added 5 sections (error handling, real-time, security, versioning, tooling) that were absent from the original research.
+Each step's output feeds into the next. The Evaluator is auto-appended to every workflow and scores the result in the UI.
 
 ## Architecture
 
@@ -132,18 +134,21 @@ One timeout aborted all downstream steps, discarding earlier results.
 
 **Fix:** Catch exceptions in `_run_step`, return fallback string instead of re-raising. Failed step shows red in UI; workflow continues.
 
-### 4. SDK agent couldn't read temp files for evaluation
+### 4. Evaluator failed to read temp files via SDK agent
 
-The Evaluator worker, using the SDK agent loop, failed to read temp files containing upstream outputs — returning "permission error" instead of scoring the result.
+The Evaluator, running as an SDK agent, couldn't read temp files containing upstream outputs — returning "permission error" instead of scoring.
 
-**Fix:** Evaluator doesn't need tools, multi-turn loops, or file access. Replaced `SdkWorker` with `ApiWorker` — a direct Anthropic Messages API call that receives the full prompt as a message, returns a JSON score, and avoids the SDK CLI entirely.
+**Fix:** The Evaluator doesn't need tools or multi-turn agent loops. Replaced `SdkWorker` with `ApiWorker` — a direct Anthropic Messages API call. Additionally, the orchestrator now auto-appends an Evaluator step to every workflow regardless of planner mode, so both rule-based and LLM-based plans always get scored.
 
 ```python
-# Before — SDK agent loop, fails on temp file read
-if name == "evaluator":
-    return SdkWorker(spec, model=model)  # CLI subprocess → permission error
-
-# After — direct API call, no tools needed
-if name == "evaluator":
-    return ApiWorker(spec, model=model)  # simple API call → JSON score
+# ApiWorker — no CLI subprocess, no temp files, no tools
+class ApiWorker:
+    async def run(self, task, on_log, on_tool):
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=self.model,
+            system=self.spec.system_prompt,
+            messages=[{"role": "user", "content": task}],
+        )
+        return response.content[0].text
 ```
