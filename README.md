@@ -12,14 +12,15 @@ All orchestration logic is built from scratch in async Python. No LangGraph, no 
 
 ## Workers
 
-Four specialized agents, each backed by the Claude Agent SDK.
+Five specialized agents. Four use the Claude Agent SDK; the Evaluator calls the Anthropic API directly.
 
-| Worker | Role | Tools |
-|---|---|---|
-| **Researcher** | Gathers and cross-checks facts from the web | WebSearch, Read |
-| **Coder** | Writes code to satisfy a spec | Read, Write, Edit, Bash |
-| **Reviewer** | Reviews code from the previous step and writes tests | Read |
-| **Writer** | Combines all prior outputs into the final answer | Read |
+| Worker | Role | Tools | Backend |
+|---|---|---|---|
+| **Researcher** | Gathers and cross-checks facts from the web | WebSearch, Read | SDK agent |
+| **Coder** | Writes code to satisfy a spec | Read, Write, Edit, Bash | SDK agent |
+| **Reviewer** | Reviews code from the previous step and writes tests | Read | SDK agent |
+| **Writer** | Combines all prior outputs into the final answer | Read | SDK agent |
+| **Evaluator** | Scores the final output for completeness, correctness, and quality | — | Direct API call |
 
 ## How It Works
 
@@ -37,14 +38,15 @@ Request → Planner → Orchestrator → EventBus → Chat UI
 
 ### Example
 
-Request: *"Research CSV pitfalls, then write a parser that avoids them"*
+Request: *"What are the tradeoffs between REST and GraphQL?"*
 
 | Step | Worker | What happens | Output |
 |---|---|---|---|
-| 1 | **Researcher** | Searches the web, cross-checks sources | 13 CSV pitfalls documented (encoding, BOM, quoted fields, ragged rows, ...) |
-| 2 | **Coder** | Reads step 1 output, writes code addressing each pitfall | `robust_csv_parser.py` — encoding detection, RFC 4180 quote handling, malformed row recovery |
-| 3 | **Reviewer** | Reads step 2 output, finds bugs, writes tests | 5 issues identified + pytest suite covering all 7 pitfall categories |
-| 4 | **Writer** | Reads steps 1–3, assembles final answer | Pitfall summary → corrected code → test suite → caveats, in one structured response |
+| 1 | **Researcher** | Searches the web, cross-checks 11 sources | 8 tradeoff categories documented (performance, caching, over-fetching, versioning, tooling, learning curve, ...) |
+| 2 | **Evaluator** | Scores the research for accuracy and completeness | 4/5 overall — flagged 10 missing areas (error handling, real-time, security, versioning, tooling) |
+| 3 | **Writer** | Reads research + evaluation feedback, fills gaps | 10-section comparison with decision matrix, incorporating all flagged gaps |
+
+The Evaluator's feedback directly improved the final output — Writer added 5 sections (error handling, real-time, security, versioning, tooling) that were absent from the original research.
 
 ## Architecture
 
@@ -59,8 +61,9 @@ Request: *"Research CSV pitfalls, then write a parser that avoids them"*
     ├─ Planner (planner.py)             ← rule | llm
     ├─ EventBus (events.py)             ← visibility
     └─ Workers (registry.py)
-         ├─ MockWorker (mock_worker.py) ← zero-cost testing
-         └─ SdkWorker (sdk_worker.py)   ← Claude Agent SDK
+         ├─ MockWorker (mock_worker.py) ← development/testing
+         ├─ SdkWorker (sdk_worker.py)   ← Claude Agent SDK
+         └─ ApiWorker (api_worker.py)   ← direct API (Evaluator)
 ```
 
 ## Project Structure
@@ -80,7 +83,8 @@ multi-agent-orchestrator/
 │       ├── base.py            # Worker protocol
 │       ├── registry.py        # Agent roster + factory
 │       ├── sdk_worker.py      # Claude Agent SDK wrapper
-│       └── mock_worker.py     # Simulated worker
+│       ├── mock_worker.py     # Simulated worker
+│       └── api_worker.py      # Direct Anthropic API (Evaluator)
 └── static/
     └── index.html             # Chat UI + live pipeline
 ```
@@ -99,7 +103,7 @@ python run.py                    # → http://127.0.0.1:8000
 
 ## SDK Integration: Issues & Fixes
 
-Three issues found when connecting the mock-verified architecture to real Claude Agent SDK workers.
+Four issues found when connecting the mock-verified architecture to real Claude Agent SDK workers.
 
 ### 1. Workers ignored the user request
 
@@ -127,3 +131,19 @@ With Bash/Write/Edit available, the agent ran `git status`, read every file, and
 One timeout aborted all downstream steps, discarding earlier results.
 
 **Fix:** Catch exceptions in `_run_step`, return fallback string instead of re-raising. Failed step shows red in UI; workflow continues.
+
+### 4. SDK agent couldn't read temp files for evaluation
+
+The Evaluator worker, using the SDK agent loop, failed to read temp files containing upstream outputs — returning "permission error" instead of scoring the result.
+
+**Fix:** Evaluator doesn't need tools, multi-turn loops, or file access. Replaced `SdkWorker` with `ApiWorker` — a direct Anthropic Messages API call that receives the full prompt as a message, returns a JSON score, and avoids the SDK CLI entirely.
+
+```python
+# Before — SDK agent loop, fails on temp file read
+if name == "evaluator":
+    return SdkWorker(spec, model=model)  # CLI subprocess → permission error
+
+# After — direct API call, no tools needed
+if name == "evaluator":
+    return ApiWorker(spec, model=model)  # simple API call → JSON score
+```
