@@ -62,20 +62,26 @@ class Orchestrator:
             await bus.close()
             raise
 
-        # 3) Final result = output of the terminal step ----------------------
-        final_step = plan.steps[-1]
-        final = outputs[final_step.id]
+        # 3) Final result = output of writer step before evaluator -------------
+        final = None
+        eval_result = None
+        for step in plan.steps:
+            if step.worker == "evaluator":
+                eval_result = outputs.get(step.id)
+            else:
+                final = outputs.get(step.id, final)
 
         await bus.emit(
             EventType.RUN_COMPLETED,
-            result=final,
+            result=final or "",
+            evaluation=eval_result,
             steps_run=[
                 {"id": s.id, "worker": s.worker, "title": WORKER_SPECS[s.worker].title}
                 for s in plan.steps
             ],
         )
         await bus.close()
-        return final
+        return final or ""
 
     # ── internals ────────────────────────────────────────────────────────────
 

@@ -22,6 +22,7 @@ AVAILABLE_WORKERS = {
     "coder": "Writes code to satisfy a spec.",
     "reviewer": "Reviews code and writes tests.",
     "writer": "Synthesizes prior outputs into the final answer.",
+    "evaluator": "Scores the final output against the original request.",
 }
 
 
@@ -166,7 +167,8 @@ Respond with ONLY valid JSON, no markdown fences, no explanation:
         return Plan(
             goal=request,
             rationale="Detected a coding task. Route: Coder writes it, Reviewer "
-            "checks it and adds tests, Writer assembles the final answer.",
+            "checks it and adds tests, Writer assembles the final answer, "
+            "Evaluator scores the result.",
             steps=[
                 Step("s1", "coder", "Write code that satisfies the user's request."),
                 Step("s2", "reviewer",
@@ -175,6 +177,9 @@ Respond with ONLY valid JSON, no markdown fences, no explanation:
                 Step("s3", "writer",
                      "Combine the code and the review/tests into one final answer.",
                      depends_on=["s1", "s2"]),
+                Step("s4", "evaluator",
+                     "Score the final answer against the original request.",
+                     depends_on=["s3"]),
             ],
         )
 
@@ -182,13 +187,16 @@ Respond with ONLY valid JSON, no markdown fences, no explanation:
         return Plan(
             goal=request,
             rationale="Detected an information request. Route: Researcher gathers "
-            "facts, Writer turns them into a clear answer.",
+            "facts, Writer turns them into a clear answer, Evaluator scores the result.",
             steps=[
                 Step("s1", "researcher",
                      "Research the user's request and produce sourced notes."),
                 Step("s2", "writer",
                      "Turn the research notes into a clear, well-structured answer.",
                      depends_on=["s1"]),
+                Step("s3", "evaluator",
+                     "Score the final answer against the original request.",
+                     depends_on=["s2"]),
             ],
         )
 
@@ -196,7 +204,8 @@ Respond with ONLY valid JSON, no markdown fences, no explanation:
         return Plan(
             goal=request,
             rationale="Detected research-then-build. Route: Researcher gathers "
-            "context, Coder builds on it, Reviewer tests it, Writer finalizes.",
+            "context, Coder builds on it, Reviewer tests it, Writer finalizes, "
+            "Evaluator scores the result.",
             steps=[
                 Step("s1", "researcher",
                      "Research the background needed to satisfy the request."),
@@ -209,5 +218,8 @@ Respond with ONLY valid JSON, no markdown fences, no explanation:
                 Step("s4", "writer",
                      "Combine the research, code, and review into a final answer.",
                      depends_on=["s1", "s2", "s3"]),
+                Step("s5", "evaluator",
+                     "Score the final answer against the original request.",
+                     depends_on=["s4"]),
             ],
         )

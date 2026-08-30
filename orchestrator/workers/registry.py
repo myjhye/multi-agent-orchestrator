@@ -11,6 +11,7 @@ from __future__ import annotations
 from .base import Worker, WorkerSpec
 from .sdk_worker import SdkWorker
 from .mock_worker import MockWorker
+from .api_worker import ApiWorker
 
 
 # ── The agent roster ────────────────────────────────────────────────────────
@@ -77,12 +78,34 @@ WORKER_SPECS: dict[str, WorkerSpec] = {
         max_turns=4,
         model="claude-haiku-4-5-20251001",
     ),
+    "evaluator": WorkerSpec(
+        name="evaluator",
+        title="Evaluator",
+        description="Scores the final output against the original request.",
+        system_prompt=(
+            "You are a strict output evaluator. You will receive the original user request "
+            "and the final answer produced by a multi-agent workflow. "
+            "Score the answer on these criteria, each 1-5: "
+            "Completeness (does it address everything asked?), "
+            "Correctness (are there factual or logical errors?), "
+            "Quality (is it well-structured and clear?). "
+            "Respond ONLY in this exact JSON format, nothing else: "
+            '{"completeness": N, "correctness": N, "quality": N, '
+            '"overall": N, "issues": ["issue1", "issue2"]}'
+        ),
+        allowed_tools=[],
+        max_turns=1,
+        model="claude-haiku-4-5-20251001",
+    ),
 }
 
 
 def build_worker(name: str, *, mode: str, model: str | None) -> Worker:
     """Instantiate a worker by name in the given mode ('sdk' or 'mock')."""
     spec = WORKER_SPECS[name]
+    # Evaluator uses direct API call — no agent loop, no tools, no temp files
+    if name == "evaluator" and mode == "sdk":
+        return ApiWorker(spec, model=model)
     if mode == "sdk":
         return SdkWorker(spec, model=model)
     return MockWorker(spec, model=model)

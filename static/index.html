@@ -437,6 +437,22 @@ function onRunCompleted(p) {
   const succeeded = steps.length - failed;
   const elapsed = ((Date.now() - runStartTime) / 1000).toFixed(1);
 
+  let evalHtml = "";
+  if (p.evaluation) {
+    try {
+      const ev = JSON.parse(p.evaluation);
+      const color = ev.overall >= 4 ? "var(--done)" : ev.overall >= 3 ? "var(--running)" : "var(--failed)";
+      evalHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line-soft)">' +
+        '<b>Evaluation</b> ' +
+        '<span style="color:' + color + ';font-family:var(--mono);font-weight:600">' + ev.overall + '/5</span>' +
+        ' &nbsp; Completeness: ' + ev.completeness + ' · Correctness: ' + ev.correctness + ' · Quality: ' + ev.quality +
+        (ev.issues && ev.issues.length ? '<br><span style="color:var(--muted);font-size:12px">Issues: ' + ev.issues.join(", ") + '</span>' : '') +
+        '</div>';
+    } catch(e) {
+      evalHtml = '<div style="margin-top:8px;color:var(--muted);font-size:12px">Evaluation: ' + escapeHtml(p.evaluation) + '</div>';
+    }
+  }
+
   const summary = document.createElement("div");
   summary.className = "run-summary" + (failed > 0 ? " has-failure" : "");
   summary.innerHTML =
@@ -445,10 +461,8 @@ function onRunCompleted(p) {
     '<span class="stat">Succeeded: <span class="val">' + succeeded + '</span></span>' +
     (failed > 0 ? '<span class="stat fail">Failed: <span class="val">' + failed + '</span></span>' : '') +
     '<span class="stat">Time: <span class="val">' + elapsed + 's</span></span>' +
-    "<br>" + steps.map(s =>
-      '<span style="color:' + (document.querySelector('.node.failed .node-title')?.textContent.includes(s.title) ? 'var(--failed)' : 'var(--done)') + '">' +
-      '✓ ' + s.title + '</span>'
-    ).join(' → ');
+    "<br>" + steps.map(s => '<span style="color:var(--done)">✓ ' + s.title + '</span>').join(' → ') +
+    evalHtml;
   orch.appendChild(summary);
 
   setBusy(false);

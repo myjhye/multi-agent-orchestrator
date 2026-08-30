@@ -113,6 +113,17 @@ def _script_for(role: str, task: str) -> tuple[list[str], list[tuple[str, str]],
             + "\n\n(mock synthesis - enable WORKER_MODE=sdk for a real agent.)",
         )
 
+    if role == "evaluator":
+        return (
+            [
+                "Reading original user request and final answer.",
+                "Scoring completeness, correctness, and quality...",
+                "Formatting JSON evaluation output...",
+            ],
+            [],
+            '{"completeness": 5, "correctness": 5, "quality": 4, "overall": 5, "issues": []}',
+        )
+
     return ([f"Working on: {short}"], [], f"Completed: {short}")
 
 
