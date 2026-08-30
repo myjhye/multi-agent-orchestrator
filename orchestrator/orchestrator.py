@@ -35,6 +35,20 @@ class Orchestrator:
 
         # 1) Plan ------------------------------------------------------------
         plan: Plan = self.planner.plan(request)
+
+        # Auto-append evaluator if not already in the plan
+        if "evaluator" in WORKER_SPECS:
+            has_evaluator = any(s.worker == "evaluator" for s in plan.steps)
+            if not has_evaluator:
+                last_step = plan.steps[-1]
+                eval_step = Step(
+                    id=f"s{len(plan.steps) + 1}",
+                    worker="evaluator",
+                    instruction="Score the final answer against the original request.",
+                    depends_on=[last_step.id],
+                )
+                plan.steps.append(eval_step)
+
         await bus.emit(
             EventType.PLAN_CREATED,
             goal=plan.goal,
